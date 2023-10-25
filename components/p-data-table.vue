@@ -1,8 +1,9 @@
 <template>
     <n-data-table :data="data" :columns="columns" v-bind="$attrs" :pagination="page" :row-class-name="getRowClass"
-        @update:checked-row-keys="handleCheck" ref="myTable" flex-height striped :scroll-x="200 * 20"
+        @update:checked-row-keys="handleCheck" ref="myTable" :flex-height="height != false" striped
+        :scroll-x="disableScollX ? '100%' : 200 * columns.length"
         :row-key="(rowData) => id.map((i) => rowData[i]).join('-')" :row-props="rowProps"
-        :style="{ height: `${height}px`}"></n-data-table>
+        :style="{ height: height ? `${height}px` : '100%' }"></n-data-table>
 </template>
 <style scoped>
 :deep(.selectedRow td) {
@@ -16,6 +17,10 @@ import {
     CheckmarkCircleOutline,
     BanOutline,
     CalendarClearOutline,
+    PencilOutline,
+    AddOutline,
+    CloseCircleOutline,
+    TrashOutline 
 } from "@vicons/ionicons5";
 import { NSpace, NIcon, NInput, NButton, NDatePicker } from "naive-ui";
 
@@ -28,12 +33,21 @@ const props = defineProps({
     pagination: { required: false },
     id: { required: true, type: Array },
     multiSelection: { type: Boolean },
+    disableScollX: { type: Boolean },
+    returnObject: { type: Boolean },
+    rowProps: { required: false },
+    editable: {
+        type: Boolean,
+        required: false,
+        default: false,
+    },
 });
-var rowProps =
+var defaultRowProps =
     (rowData, rowIndex) => ({
         onClick: () => {
             if (props.selectable) {
-                const item = props.id.map((i) => rowData[i]).join('-')
+                if (props.returnObject) var item = rowData
+                else var item = props.id.map((i) => rowData[i]).join('-')
                 if (props.multiSelection) {
                     const index = multiSelected.value.indexOf(item);
                     if (index >= 0) multiSelected.value.splice(index, 1);
@@ -46,7 +60,7 @@ var rowProps =
         },
     })
 
-
+var rowProps = computed(() => props.rowProps ? props.rowProps : defaultRowProps)
 var myTable = ref(null)
 function resetFilters() { myTable.value.clearFilters(); props.columns.forEach(c => c.filterOptionValue = null) }
 function scrollTo(value) { myTable.value.scrollTo(value) }
@@ -58,13 +72,13 @@ const selected = computed({
 defineExpose({
     resetFilters, scrollTo, getData
 });
-
+var tempItem = ref({})
 var page = computed(() => {
     if (!props.pagination && props.pagination != false) {
         return {
             defaultPageSize: 10,
             showSizePicker: true,
-            pageSizes: [10, 25, 50],
+            pageSizes: [10, 25, 50, props.data.length],
             showQuickJumper: true,
         };
     }
@@ -88,7 +102,8 @@ watch(multiSelected.value, (newValue) => { emit("update:modelValue", newValue); 
 
 function getRowClass(rowData) {
     if (props.selectable) {
-        const item = props.id.map((i) => rowData[i]).join('-')
+        if (props.returnObject) var item = rowData
+        else var item = props.id.map((i) => rowData[i]).join('-')
         if (props.multiSelection) {
             const index = multiSelected.value.indexOf(item);
             if (index >= 0) return " selectedRow "
@@ -104,7 +119,7 @@ function getValue(field, value) {
     var steps = field.split(".");
     var v = value;
     var step = 0;
-    while (step < 10) {
+    while (step < steps.length) {
         v = v[steps[step]];
         if (!v) return v;
         step++;
@@ -143,116 +158,391 @@ function processColumns() {
             };
         }
         if (field.type == "Bool") {
-            field.render = (row) => {
-                if (getValue(field.key, row))
-                    return h(
-                        NIcon,
-                        { color: "green", size: 18 },
-                        { default: () => h(CheckmarkCircleOutline) }
-                    );
-                else
-                    return h(NIcon, { color: "red", size: 18 }, { default: () => h(BanOutline) });
-            };
+      field.render = (row, index) => {
+        if (
+          props.editable &&
+          row.editable &&
+          (!field.readOnly || row.new) &&
+          !field.auto
+        ) {
+          return h(NSwitch, {
+            value: tempItem[field.key],
+            onUpdateValue(v) {
+              tempItem[field.key] = v
+            },
+          })
+        } else if (row[field.key] == true)
+          return h(
+            NIcon,
+            { color: "green", size: 18 },
+            { default: () => h(CheckmarkCircleOutline) }
+          )
+        else if (row[field.key] == false)
+          return h(NIcon, { color: "red", size: 18 }, { default: () => h(BanOutline) })
+        else return h(NIcon, { color: "orange", size: 18 }, { default: () => h(Warning) })
+      }
+    }
+    if (field.type == "autocomplete" && props.editable) {
+      field.render = (row, index) => {
+        if ((!field.readOnly || row.new) && !field.auto && row.editable)
+          return h(BAutocomplete, {
+            ...field,
+            modelValue: tempItem[field.key],
+            multiple: false,
+            onUpdateValue(v) {
+              tempItem[field.key] = v
+            },
+          })
+        return getValue(field.key, row)
+      }
+    }
+    if (!field.type && props.editable) {
+      field.render = (row, index) => {
+        if ((!field.readOnly || row.new) && !field.auto && row.editable)
+          return h(NInput, {
+            value: tempItem[field.key],
+            onUpdateValue(v) {
+              tempItem[field.key] = v
+            },
+          })
+        return getValue(field.key, row)
+      }
+    }
+    if (field.type == "Int") {
+      field.render = (row, index) => {
+        if (
+          props.editable &&
+          row.editable &&
+          (!field.readOnly || row.new) &&
+          !field.auto
+        ) {
+          return h(NInputNumber, {
+            value: tempItem[field.key],
+            onUpdateValue(v) {
+              tempItem[field.key] = v
+            },
+          })
         }
-        if (!field.filter && field.filter != false) {
-            field.filterOptionValue = null;
-            field.filter = (value, row) => {
-                var v = getValue(field.key, row).toString();
-                return !value || (v && v.toLowerCase().indexOf(value.toLowerCase()) >= 0);
-            };
-            field.renderFilterIcon = () => {
-                return h(NIcon, null, { default: () => h(SearchOutline) });
-            };
-            field.renderFilterMenu = ({ hide }) => {
-                return h(
-                    NSpace,
-                    { style: { padding: "12px" }, vertical: true },
-                    {
-                        default: () => [
-                            h(NInput, {
-                                placeholder: "Text Search",
-                                value: field.filterOptionValue,
-                                onKeyup: (key) => {
-                                    if (key.code == "Enter") hide();
-                                },
-                                onInput: (text) => {
-                                    field.filterOptionValue = text;
-                                },
-                            }),
-                            h(
-                                NButton,
-                                {
-                                    size: "tiny",
-                                    onClick: () => {
-                                        field.filterOptionValue = null;
-                                        hide();
-                                    },
-                                },
-                                { default: () => "Clear" }
-                            ),
-                        ],
-                    }
-                );
-            };
+        return getValue(field.key, row)
+      }
+    }
+    if (!field.filter && field.filter != false) {
+      field.filterOptionValue = null
+      field.filter = (value, row) => {
+        var v = getValue(field.key, row)
+        if (field.type == "Set")
+          return (
+            !value ||
+            (v && v.some((va) => va.toLowerCase().indexOf(value.toLowerCase()) >= 0))
+          )
+        return !value || (v && v.toLowerCase().indexOf(value.toLowerCase()) >= 0)
+      }
+      field.renderFilterIcon = () => {
+        return h(NIcon, null, { default: () => h(SearchOutline) })
+      }
+      field.renderFilterMenu = ({ hide }) => {
+        return h(
+          NSpace,
+          { style: { padding: "12px" }, vertical: true },
+          {
+            default: () => [
+              h(NInput, {
+                placeholder: "Text Search",
+                value: field.filterOptionValue,
+                onKeyup: (key) => {
+                  if (key.code == "Enter") hide()
+                },
+                onInput: (text) => {
+                  field.filterOptionValue = text
+                },
+              }),
+              h(
+                NButton,
+                {
+                  size: "tiny",
+                  onClick: () => {
+                    field.filterOptionValue = null
+                    hide()
+                  },
+                },
+                { default: () => "Clear" }
+              ),
+            ],
+          }
+        )
+      }
+    }
+    if (field.type == "Set") {
+      field.render = (row) => {
+        var temp = getValue(field.key, row)
+        if (
+          props.editable &&
+          row.editable &&
+          (!field.readOnly || row.new) &&
+          !field.auto
+        ) {
+          return h(NDynamicInput, {
+            value: tempItem[field.key],
+            onUpdateValue(v) {
+              tempItem[field.key] = v
+            },
+          })
         }
-        if (field.type == "Currency") {
-            field.align = "right";
-            field.render = (row) =>
-                getValue(field.key, row).toLocaleString("pt-br", { minimumFractionDigits: 2 });
+        return temp ? temp.join(", ") : ""
+      }
+    }
+    if (field.type == "Currency") {
+      field.align = "right"
+      field.render = (row) =>
+        row[field.key] == 0
+          ? "-"
+          : row[field.key].toLocaleString("pt-br", { minimumFractionDigits: 2 })
+    }
+    if (field.type == "Date") {
+      field.render = (row) => {
+        if (
+          props.editable &&
+          row.editable &&
+          (!field.readOnly || row.new) &&
+          !field.auto
+        ) {
+          return h(NDatePicker, {
+            format: "dd/MM/yyyy",
+            valueFormat: "yyyy-MM-dd",
+            defaultFormattedValue: tempItem[field.key],
+            onUpdateFormattedValue(v) {
+              tempItem[field.key] = v
+            },
+          })
         }
-        if (field.type == "Date") {
-            field.render = (row) => { var v = getValue(field.key, row); return v ? new Date(v).toLocaleDateString("pt-BR") : "" }
+        return row[field.key]
+          ? new Date(row[field.key] + " GMT-0300").toLocaleDateString("pt-BR")
+          : ""
+      }
+      field.filterOptionValue = null
+      field.renderFilterIcon = () => {
+        return h(NIcon, null, { default: () => h(CalendarClearOutline) })
+      }
+      field.filter = (value, row) => {
+        return (
+          !field.filterOptionValue ||
+          (row[field.key] &&
+            new Date(row[field.key] + " GMT-0300") >=
+              new Date(field.filterOptionValue[0]) &&
+            new Date(row[field.key] + " GMT-0300") <=
+              new Date(field.filterOptionValue[1]))
+        )
+      }
+      field.renderFilterMenu = ({ hide }) => {
+        return h(
+          NSpace,
+          { style: { padding: "12px" }, vertical: true },
+          {
+            default: () => [
+              h(NDatePicker, {
+                type: "daterange",
+                value: field.filterOptionValue,
+                clearable: true,
+                onConfirm: ([min, max]) => {
+                  field.filterOptionValue = [min, max]
+                  hide()
+                },
+              }),
+              h(
+                NButton,
+                {
+                  size: "tiny",
+                  onClick: () => {
+                    field.filterOptionValue = null
+                    hide()
+                  },
+                },
+                { default: () => "Clear" }
+              ),
+            ],
+          }
+        )
+      }
+    }
+  })
 
-            field.filterOptionValue = null;
-            field.renderFilterIcon = () => {
-                return h(NIcon, null, { default: () => h(CalendarClearOutline) });
-            };
-            field.filter = (value, row) => {
-                var v = getValue(field.key, row);
-                return (
-                    !field.filterOptionValue ||
-                    (v &&
-                        new Date(v) >= new Date(field.filterOptionValue[0]) &&
-                        new Date(v) <= new Date(field.filterOptionValue[1]))
-                );
-            };
-            field.renderFilterMenu = ({ hide }) => {
-                return h(
-                    NSpace,
-                    { style: { padding: "12px" }, vertical: true },
+  if (props.editable) {
+    var col = {
+      key: "actions",
+      filter: false,
+      title: () => {
+        return h(
+          NButton,
+          {
+            circle: true,
+            strong: true,
+            tertiary: true,
+            type: "success",
+            onClick: () => {
+              if (!props.data.some((i) => i.new)) {
+                props.data.forEach((r) => (r.editable = false))
+                tempItem = { editable: true, new: true }
+                props.data.unshift(tempItem)
+              }
+            },
+          },
+          {
+            icon: () =>
+              h(
+                NIcon,
+                {
+                  color: "green",
+                  size: 24,
+                },
+                {
+                  default: () => h(AddOutline),
+                }
+              ),
+          }
+        )
+      },
+      render: (row) => {
+        return row.editable
+          ? [
+              h(
+                NButton,
+                {
+                  circle: true,
+                  strong: true,
+                  tertiary: true,
+                  type: "success",
+                  onClick: () => {
+                    dialog.warning({
+                      title: `Confirmação de ${row.new ? "Inclusão" : "Alteração"}`,
+                      content: `Tem certeza que deseja efetuar ${
+                        row.new ? "a Inclusão" : "as alterações"
+                      }?`,
+                      positiveText: "SIM",
+                      negativeText: "NÃO",
+                      onPositiveClick: () => {
+                        message.success(
+                          `Item ${row.new ? "incluido" : "alterado"} com sucesso`
+                        )
+                        emit("put", tempItem)
+                        row.editable = false
+                        tempItem = {}
+                      },
+                      onNegativeClick: () => {},
+                    })
+                  },
+                },
+                {
+                  icon: () =>
+                    h(
+                      NIcon,
+                      { color: "green", size: 22 },
+                      {
+                        default: () => h(CheckmarkCircleOutline),
+                      }
+                    ),
+                }
+              ),
+              h(
+                NButton,
+                {
+                  circle: true,
+                  strong: true,
+                  tertiary: true,
+                  type: "warning",
+                  onClick: () => {
+                    if (row.new) props.data.splice(0, 1)
+                    row.editable = false
+                    tempItem = {}
+                  },
+                },
+                {
+                  icon: () =>
+                    h(
+                      NIcon,
+                      { color: "orange", size: 22 },
+                      {
+                        default: () => h(CloseCircleOutline),
+                      }
+                    ),
+                }
+              ),
+              h(
+                NButton,
+                {
+                  circle: true,
+                  strong: true,
+                  tertiary: true,
+                  type: "error",
+                  onClick: () => {
+                    dialog.error({
+                      title: "Confirmação de Exclusão",
+                      content: "Tem certeza que deseja deletar este item?",
+                      positiveText: "SIM",
+                      negativeText: "NÃO",
+                      onPositiveClick: () => {
+                        message.success("Item removido com sucesso")
+                        emit("delete", tempItem)
+                        row.editable = false
+                        tempItem = {}
+                      },
+                      onNegativeClick: () => {},
+                    })
+                  },
+                },
+                {
+                  icon: () =>
+                    h(
+                      NIcon,
+                      { color: "red", size: 22 },
+                      {
+                        default: () => h(TrashOutline),
+                      }
+                    ),
+                }
+              ),
+            ]
+          : h(
+              NButton,
+              {
+                circle: true,
+                strong: true,
+                tertiary: true,
+                type: "info",
+                onClick: () => {
+                  row.editable = true
+                  tempItem = ref(structuredClone(toRaw(row))).value
+                  props.data.forEach((r) => (r.editable = false))
+                  row.editable = true
+                },
+              },
+              {
+                icon: () =>
+                  h(
+                    NIcon,
                     {
-                        default: () => [
-                            h(NDatePicker, {
-                                type: "daterange",
-                                value: field.filterOptionValue,
-                                clearable: true,
-                                onConfirm: ([min, max]) => {
-                                    field.filterOptionValue = [min, max];
-                                    hide();
-                                },
-                            }),
-                            h(
-                                NButton,
-                                {
-                                    size: "tiny",
-                                    onClick: () => {
-                                        field.filterOptionValue = null;
-                                        hide();
-                                    },
-                                },
-                                { default: () => "Clear" }
-                            ),
-                        ],
-                    }
-                );
-            };
-        }
-    });
+                      color: "blue",
+                      size: 20,
+                    },
+                    { default: () => h(PencilOutline) }
+                  ),
+              }
+            )
+      },
+    }
+    if (props.columns.some((f) => f.key == "actions")) props.columns.splice(-1)
+    props.columns.push(col)
+  }
 }
 watch(
     () => props.data,
     (first, second) => {
-        // if (first.length > 0) processColumns();
+        if (first.length > 0) processColumns();
+    }
+);
+watch(
+    () => props.columns,
+    (first, second) => {
+        if (first.length > 0) processColumns();
     }
 );
 </script>
